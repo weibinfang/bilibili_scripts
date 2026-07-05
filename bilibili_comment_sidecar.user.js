@@ -3,7 +3,7 @@
 // @namespace    local.bilibili.comment.sidecar
 // @version      0.8.0
 // @description  Show Bilibili video comments beside the player.
-// @author       local
+// @author       weibin.fang
 // @match        https://www.bilibili.com/video/*
 // @match        https://www.bilibili.com/list/watchlater*
 // @run-at       document-end
