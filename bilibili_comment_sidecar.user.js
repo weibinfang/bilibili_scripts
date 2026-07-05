@@ -516,7 +516,16 @@
     // Time and like count
     const metaDiv = document.createElement('div');
     metaDiv.className = 'bcs-meta';
-    metaDiv.innerHTML = `<span>${esc(fmtTime(r.ctime))}</span>`;
+    
+    // Build metadata with time and IP location if available
+    let metaHtml = `<span>${esc(fmtTime(r.ctime))}</span>`;
+    
+    // Check for IP location in member data (B站API可能返回ip_location字段)
+    if (m.ip_location) {
+      metaHtml += ` · <span style="color:#9499a0;">来自${esc(m.ip_location)}</span>`;
+    }
+    
+    metaDiv.innerHTML = metaHtml;
     contentDiv.appendChild(metaDiv);
     
     // Action buttons: Like, Dislike, Reply
@@ -578,11 +587,18 @@
   function renderChild(r) {
     const m = r.member||{}, c = r.content||{};
     const el = document.createElement('div'); el.className = 'bcs-child';
+    
+    // Build child meta with time and IP location if available
+    let childMetaHtml = `${esc(fmtTime(r.ctime))} · ${r.like||0} 赞`;
+    if (m.ip_location) {
+      childMetaHtml += ` · <span style="color:#9499a0;">来自${esc(m.ip_location)}</span>`;
+    }
+    
     el.innerHTML = `<img class="bcs-child-avatar" src="${esc(m.avatar||'')}" referrerpolicy="no-referrer" loading="lazy" alt="">
       <div class="bcs-child-content">
         <div class="bcs-child-name">${esc(m.uname||'B站用户')}</div>
         <div class="bcs-child-message">${renderMessageContent(c.message || '', c.emote, c.pictures)}</div>
-        <div class="bcs-child-meta">${esc(fmtTime(r.ctime))} · ${r.like||0} 赞</div>
+        <div class="bcs-child-meta">${childMetaHtml}</div>
       </div>`;
     return el;
   }
