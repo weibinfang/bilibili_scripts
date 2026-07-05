@@ -502,10 +502,18 @@
     
     const contentDiv = document.createElement('div');
     
-    // Name and message
+    // Name with IP location
     const nameDiv = document.createElement('div');
     nameDiv.className = 'bcs-name';
-    nameDiv.textContent = esc(m.uname||'B站用户');
+    let nameHtml = esc(m.uname||'B站用户');
+    
+    // Add IP location after username (B站API返回格式: "IP属地：吉林")
+    if (replyControl.location) {
+      const locationText = replyControl.location.replace(/^IP属地：/, '');
+      nameHtml += ` <span style="color:#00a1d6;font-size:12px;margin-left:4px;">${esc(locationText)}</span>`;
+    }
+    
+    nameDiv.innerHTML = nameHtml;
     contentDiv.appendChild(nameDiv);
     
     const msgDiv = document.createElement('div');
@@ -517,18 +525,7 @@
     // Time and like count
     const metaDiv = document.createElement('div');
     metaDiv.className = 'bcs-meta';
-    
-    // Build metadata with time and IP location if available
-    let metaHtml = `<span>${esc(fmtTime(r.ctime))}</span>`;
-    
-    // Check for IP location in reply_control (B站API返回格式: "IP属地：吉林")
-    if (replyControl.location) {
-      // Extract just the location part after "IP属地："
-      const locationText = replyControl.location.replace(/^IP属地：/, '');
-      metaHtml += ` · <span style="color:#9499a0;">${esc(locationText)}</span>`;
-    }
-    
-    metaDiv.innerHTML = metaHtml;
+    metaDiv.innerHTML = `<span>${esc(fmtTime(r.ctime))}</span>`;
     contentDiv.appendChild(metaDiv);
     
     // Action buttons: Like, Dislike, Reply
@@ -592,17 +589,19 @@
     const replyControl = r.reply_control || {};
     const el = document.createElement('div'); el.className = 'bcs-child';
     
-    // Build child meta with time and IP location if available
-    let childMetaHtml = `${esc(fmtTime(r.ctime))} · ${r.like||0} 赞`;
+    // Build child name with IP location
+    let childNameHtml = esc(m.uname||'B站用户');
     if (replyControl.location) {
-      // Extract just the location part after "IP属地："
       const locationText = replyControl.location.replace(/^IP属地：/, '');
-      childMetaHtml += ` · <span style="color:#9499a0;">${esc(locationText)}</span>`;
+      childNameHtml += ` <span style="color:#00a1d6;font-size:11px;margin-left:4px;">${esc(locationText)}</span>`;
     }
+    
+    // Build child meta with time and like count
+    const childMetaHtml = `${esc(fmtTime(r.ctime))} · ${r.like||0} 赞`;
     
     el.innerHTML = `<img class="bcs-child-avatar" src="${esc(m.avatar||'')}" referrerpolicy="no-referrer" loading="lazy" alt="">
       <div class="bcs-child-content">
-        <div class="bcs-child-name">${esc(m.uname||'B站用户')}</div>
+        <div class="bcs-child-name">${childNameHtml}</div>
         <div class="bcs-child-message">${renderMessageContent(c.message || '', c.emote, c.pictures)}</div>
         <div class="bcs-child-meta">${childMetaHtml}</div>
       </div>`;
