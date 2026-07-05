@@ -509,7 +509,8 @@
     
     const msgDiv = document.createElement('div');
     msgDiv.className = 'bcs-message';
-    msgDiv.textContent = esc(c.message||'');
+    // Render message with images and emojis using the emote data from API
+    msgDiv.innerHTML = renderMessageContent(c.message || '', c.emote, c.pictures);
     contentDiv.appendChild(msgDiv);
     
     // Time and like count
@@ -580,7 +581,7 @@
     el.innerHTML = `<img class="bcs-child-avatar" src="${esc(m.avatar||'')}" referrerpolicy="no-referrer" loading="lazy" alt="">
       <div class="bcs-child-content">
         <div class="bcs-child-name">${esc(m.uname||'B站用户')}</div>
-        <div class="bcs-child-message">${esc(c.message||'')}</div>
+        <div class="bcs-child-message">${renderMessageContent(c.message || '', c.emote, c.pictures)}</div>
         <div class="bcs-child-meta">${esc(fmtTime(r.ctime))} · ${r.like||0} 赞</div>
       </div>`;
     return el;
@@ -724,6 +725,37 @@
   function getCookie(name) {
     const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
     return match ? match[2] : null;
+  }
+
+  /* ── render message with images and emojis ───────────── */
+  function renderMessageContent(message, emote, pictures) {
+    if (!message) return '';
+      
+    let html = esc(message);
+      
+    // Replace emoji codes with actual images using the emote data from API
+    if (emote && typeof emote === 'object') {
+      Object.keys(emote).forEach(emojiCode => {
+        const emojiData = emote[emojiCode];
+        if (emojiData && emojiData.url) {
+          // Escape the emoji code for regex (e.g., [支持] -> \[支持\])
+          const escapedCode = emojiCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const regex = new RegExp(escapedCode, 'g');
+          html = html.replace(regex, `<img src="${esc(emojiData.url)}" alt="${esc(emojiCode)}" style="width:20px;height:20px;vertical-align:middle;margin:0 2px;" referrerpolicy="no-referrer">`);
+        }
+      });
+    }
+      
+    // If there are attached pictures in the comment
+    if (pictures && Array.isArray(pictures) && pictures.length > 0) {
+      pictures.forEach(pic => {
+        if (pic.img_src) {
+          html += `<br><img src="${esc(pic.img_src)}" style="max-width:100%;height:auto;border-radius:4px;margin-top:8px;" referrerpolicy="no-referrer" loading="lazy">`;
+        }
+      });
+    }
+      
+    return html;
   }
 
   function parseReplies(p) {
