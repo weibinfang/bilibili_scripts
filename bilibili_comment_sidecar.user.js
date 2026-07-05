@@ -466,6 +466,7 @@
   /* ── rendering (inside shadow DOM) ──────────────────── */
   function renderReply(r) {
     const m = r.member||{}, c = r.content||{}, cc = r.rcount||r.count||0;
+    const replyControl = r.reply_control || {};
     const el = document.createElement('article');
     el.className = 'bcs-item';
     el.dataset.rpid = r.rpid_str || r.rpid || '';
@@ -520,9 +521,11 @@
     // Build metadata with time and IP location if available
     let metaHtml = `<span>${esc(fmtTime(r.ctime))}</span>`;
     
-    // Check for IP location in member data (B站API可能返回ip_location字段)
-    if (m.ip_location) {
-      metaHtml += ` · <span style="color:#9499a0;">来自${esc(m.ip_location)}</span>`;
+    // Check for IP location in reply_control (B站API返回格式: "IP属地：吉林")
+    if (replyControl.location) {
+      // Extract just the location part after "IP属地："
+      const locationText = replyControl.location.replace(/^IP属地：/, '');
+      metaHtml += ` · <span style="color:#9499a0;">${esc(locationText)}</span>`;
     }
     
     metaDiv.innerHTML = metaHtml;
@@ -586,12 +589,15 @@
 
   function renderChild(r) {
     const m = r.member||{}, c = r.content||{};
+    const replyControl = r.reply_control || {};
     const el = document.createElement('div'); el.className = 'bcs-child';
     
     // Build child meta with time and IP location if available
     let childMetaHtml = `${esc(fmtTime(r.ctime))} · ${r.like||0} 赞`;
-    if (m.ip_location) {
-      childMetaHtml += ` · <span style="color:#9499a0;">来自${esc(m.ip_location)}</span>`;
+    if (replyControl.location) {
+      // Extract just the location part after "IP属地："
+      const locationText = replyControl.location.replace(/^IP属地：/, '');
+      childMetaHtml += ` · <span style="color:#9499a0;">${esc(locationText)}</span>`;
     }
     
     el.innerHTML = `<img class="bcs-child-avatar" src="${esc(m.avatar||'')}" referrerpolicy="no-referrer" loading="lazy" alt="">
@@ -777,6 +783,7 @@
   function parseReplies(p) {
     if (!p || p.code !== 0 || !p.data) throw new Error(p?.message || 'API failed');
     const d = p.data;
+    
     // Collect pinned comments: upper.top + top_replies
     const pinned = [];
     if (d.upper?.top) pinned.push(d.upper.top);
