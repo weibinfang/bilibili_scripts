@@ -257,6 +257,7 @@
       }
       
       const userInfo = data.data.card;
+      
       const uname = userInfo.name || 'B站用户';
       const level = userInfo.level_info?.current_level || 0;
       const face = userInfo.face || '';
@@ -264,6 +265,16 @@
       const following = parseInt(userInfo.attention) || 0;
       const follower = parseInt(userInfo.fans) || 0;
       const videos = parseInt(userInfo.videos) || 0;
+      const sex = userInfo.sex || '保密';
+      const articleCount = parseInt(userInfo.article) || 0;
+      
+      // Check VIP status
+      const isVip = userInfo.vip && (userInfo.vip.status === 1 || userInfo.vip.vipStatus === 1);
+      const vipLabel = userInfo.vip?.label?.text || '';
+      
+      // Check official verification
+      const isOfficial = userInfo.Official && userInfo.Official.role > 0;
+      const officialTitle = userInfo.Official?.title || '';
       
       // Format numbers with Chinese units
       const formatNum = (num) => {
@@ -281,6 +292,8 @@
               <span class="bcs-tooltip-name">${esc(uname)}</span>
               <span class="bcs-tooltip-level">LV${level}</span>
             </div>
+            ${isVip ? `<div style="margin-top:4px;"><span style="display:inline-block;padding:2px 6px;background:#fb7299;color:#fff;font-size:10px;border-radius:3px;">${esc(vipLabel || '大会员')}</span></div>` : ''}
+            ${isOfficial ? `<div style="margin-top:4px;font-size:11px;color:#ff6699;">🎓 ${esc(officialTitle)}</div>` : ''}
           </div>
         </div>
         <div class="bcs-tooltip-stats">
@@ -296,8 +309,15 @@
             <div class="bcs-tooltip-stat-value">${formatNum(follower)}</div>
             <div class="bcs-tooltip-stat-label">粉丝</div>
           </div>
+          ${articleCount > 0 ? `
+          <div class="bcs-tooltip-stat">
+            <div class="bcs-tooltip-stat-value">${formatNum(articleCount)}</div>
+            <div class="bcs-tooltip-stat-label">获赞</div>
+          </div>
+          ` : ''}
         </div>
         ${sign ? `<div style="margin-top:8px;font-size:12px;color:#61666d;line-height:16px;">${esc(sign)}</div>` : ''}
+        ${sex !== '保密' ? `<div style="margin-top:4px;font-size:11px;color:#9499a0;">性别: ${esc(sex === '男' ? '️ 男' : sex === '女' ? '♀️ 女' : sex)}</div>` : ''}
         <div class="bcs-tooltip-actions">
           <button class="bcs-btn-follow">+ 关注</button>
           <button class="bcs-btn-msg">发消息</button>
