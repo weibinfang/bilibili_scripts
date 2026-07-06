@@ -670,11 +670,16 @@
       const ch = document.createElement('div'); ch.className = 'bcs-children'; el.appendChild(ch);
       if (Array.isArray(r.replies) && r.replies.length)
         r.replies.slice(0,3).forEach(c => ch.appendChild(renderChild(c)));
-      const btn = document.createElement('button');
-      btn.className = 'bcs-reply-toggle'; btn.type = 'button';
-      btn.textContent = `查看 ${cc} 条回复`;
-      btn.addEventListener('click', () => toggleChildren(r, el, btn));
-      ch.appendChild(btn);
+      
+      // Only show toggle button if there are more replies than displayed
+      const hasMoreReplies = cc > (r.replies?.length || 0);
+      if (hasMoreReplies || cc > 1) {
+        const btn = document.createElement('button');
+        btn.className = 'bcs-reply-toggle'; btn.type = 'button';
+        btn.textContent = `查看 ${cc} 条回复`;
+        btn.addEventListener('click', () => toggleChildren(r, el, btn));
+        ch.appendChild(btn);
+      }
     }
     return el;
   }
@@ -877,19 +882,31 @@
       const rcount = parseInt(parentItem.dataset.rcount || '0') + 1;
       parentItem.dataset.rcount = String(rcount);
       
+      // Count existing child elements (excluding toggle button)
+      const existingChildren = Array.from(childrenDiv.querySelectorAll('.bcs-child')).length;
+      
+      // Only show toggle button if there are more replies than displayed
+      const hasMoreReplies = rcount > (existingChildren + 1); // +1 for the new reply we just added
+      
       // Update or create toggle button
-      if (!toggleBtn) {
-        const btn = document.createElement('button');
-        btn.className = 'bcs-reply-toggle';
-        btn.type = 'button';
-        btn.textContent = `查看 ${rcount} 条回复`;
-        btn.addEventListener('click', () => toggleChildren({
-          rpid_str: parentItem.dataset.rpid,
-          rpid: parentItem.dataset.rpid
-        }, parentItem, btn));
-        childrenDiv.appendChild(btn);
-      } else {
-        toggleBtn.textContent = `查看 ${rcount} 条回复`;
+      let toggleBtn = childrenDiv.querySelector('.bcs-reply-toggle');
+      if (hasMoreReplies) {
+        if (!toggleBtn) {
+          const btn = document.createElement('button');
+          btn.className = 'bcs-reply-toggle';
+          btn.type = 'button';
+          btn.textContent = `查看 ${rcount} 条回复`;
+          btn.addEventListener('click', () => toggleChildren({
+            rpid_str: parentItem.dataset.rpid,
+            rpid: parentItem.dataset.rpid
+          }, parentItem, btn));
+          childrenDiv.appendChild(btn);
+        } else {
+          toggleBtn.textContent = `查看 ${rcount} 条回复`;
+        }
+      } else if (toggleBtn) {
+        // Remove toggle button if all replies are now visible
+        toggleBtn.remove();
       }
       
       console.log('New reply inserted successfully');
