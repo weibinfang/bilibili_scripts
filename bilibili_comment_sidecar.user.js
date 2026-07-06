@@ -224,6 +224,22 @@
     html.bcs-active .video-comment {
       display: none !important;
     }
+    
+    /* Enlarge Bilibili video player progress bar thumb */
+    .bpx-player-progress-wrap .bpx-player-progress-btn,
+    .bpx-player-control-bottom-progress .bui-bar-btn,
+    .bui-progress .bui-progress-dot {
+      width: 16px !important;
+      height: 16px !important;
+      transform: scale(1.5) !important;
+    }
+    
+    /* Make the thumb more visible on hover */
+    .bpx-player-progress-wrap .bpx-player-progress-btn:hover,
+    .bpx-player-control-bottom-progress .bui-bar-btn:hover,
+    .bui-progress .bui-progress-dot:hover {
+      transform: scale(1.8) !important;
+    }
   `);
 
   /* Apply inline !important to hide native comment sections */
