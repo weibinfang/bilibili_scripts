@@ -141,7 +141,23 @@
 
   function fmtTime(ts) {
     if (!ts) return '';
-    const d = new Date(ts * 1000);
+    const now = Date.now();
+    const commentTime = ts * 1000;
+    const diffMs = now - commentTime;
+    const diffSec = Math.floor(diffMs / 1000);
+    const diffMin = Math.floor(diffSec / 60);
+    const diffHour = Math.floor(diffMin / 60);
+    const diffDay = Math.floor(diffHour / 24);
+    
+    // Relative time format
+    if (diffSec < 60) return '刚刚';
+    if (diffMin < 60) return `${diffMin}分钟前`;
+    if (diffHour < 24) return `${diffHour}小时前`;
+    if (diffDay < 7) return `${diffDay}天前`;
+    if (diffDay < 30) return `${Math.floor(diffDay / 7)}周前`;
+    
+    // For older comments, show date
+    const d = new Date(commentTime);
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   }
 
@@ -365,15 +381,27 @@
     .bcs-btn-follow { flex:1;background:#00aeec;color:#fff;border:0;padding:8px 16px;border-radius:4px;cursor:pointer;font-size:13px }
     .bcs-btn-msg { flex:1;background:#fff;color:#61666d;border:1px solid #e3e5e7;padding:8px 16px;border-radius:4px;cursor:pointer;font-size:13px }
     .bcs-tooltip-loading { color:#9499a0;font-size:12px;text-align:center;padding:20px 0 }
-    .bcs-item { border-bottom:1px solid #f1f2f3;display:grid;gap:0 10px;grid-template-columns:34px minmax(0,1fr);padding:12px 0 }
-    .bcs-avatar { background:#f1f2f3;border-radius:50%;grid-row:span 3;height:34px;object-fit:cover;width:34px }
-    .bcs-name { color:#61666d;font-size:13px;font-weight:600;line-height:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap }
-    .bcs-message { color:#18191c;font-size:13px;line-height:19px;margin-top:4px;overflow-wrap:anywhere;white-space:pre-wrap }
+    .bcs-item { border-bottom:1px solid #f1f2f3;display:grid;gap:0 10px;grid-template-columns:34px minmax(0,1fr);padding:12px 0;transition:background-color 0.2s ease;border-radius:6px;margin:0 -6px;padding-left:6px;padding-right:6px }
+    .bcs-item:hover { background-color:#f6f7f8 }
+    .bcs-avatar { background:#f1f2f3;border-radius:50%;grid-row:span 3;height:34px;object-fit:cover;width:34px;transition:transform 0.2s ease }
+    .bcs-item:hover .bcs-avatar { transform:scale(1.05) }
+    .bcs-name { color:#61666d;font-size:13px;font-weight:600;line-height:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:6px }
+    .bcs-location-badge { display:inline-flex;align-items:center;padding:2px 6px;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:#fff;font-size:10px;border-radius:10px;font-weight:500;letter-spacing:0.5px }
+    .bcs-message { color:#18191c;font-size:13px;line-height:20px;margin-top:4px;overflow-wrap:anywhere;white-space:pre-wrap }
     .bcs-meta { color:#9499a0;font-size:12px;line-height:18px;margin-top:6px;display:flex;align-items:center;gap:12px }
     .bcs-actions { display:flex;align-items:center;gap:12px;margin-top:6px }
-    .bcs-action-btn { background:none;border:0;color:#9499a0;cursor:pointer;display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:0 }
-    .bcs-action-btn:hover { color:#00aeec }
+    .bcs-action-btn { background:none;border:0;color:#9499a0;cursor:pointer;display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:4px 8px;border-radius:4px;transition:all 0.2s ease }
+    .bcs-action-btn:hover { color:#00aeec;background-color:rgba(0,174,236,0.1) }
     .bcs-action-btn.active { color:#00aeec }
+    .bcs-action-btn:active { transform:scale(0.95) }
+    /* Like button animation */
+    .bcs-action-btn[data-action="like"].liked { color:#ff6699 }
+    .bcs-action-btn[data-action="like"].liked svg { animation:bcs-like-pulse 0.4s ease }
+    @keyframes bcs-like-pulse {
+      0% { transform:scale(1); }
+      50% { transform:scale(1.3); }
+      100% { transform:scale(1); }
+    }
     .bcs-action-icon { width:16px;height:16px;fill:currentColor }
     .bcs-reply-input { margin-top:8px;padding:8px;background:#f6f7f8;border-radius:6px }
     .bcs-reply-textarea { width:100%;border:1px solid #e3e5e7;border-radius:4px;padding:8px;font-size:12px;resize:vertical;min-height:60px;box-sizing:border-box }
@@ -527,10 +555,10 @@
     nameDiv.className = 'bcs-name';
     let nameHtml = esc(m.uname||'B站用户');
     
-    // Add IP location after username (B站API返回格式: "IP属地：吉林")
+    // Add IP location after username as a badge (B站API返回格式: "IP属地：吉林")
     if (replyControl.location) {
       const locationText = replyControl.location.replace(/^IP属地：/, '');
-      nameHtml += ` <span style="color:#00a1d6;font-size:12px;margin-left:4px;">${esc(locationText)}</span>`;
+      nameHtml += `<span class="bcs-location-badge">${esc(locationText)}</span>`;
     }
     
     nameDiv.innerHTML = nameHtml;
@@ -609,11 +637,11 @@
     const replyControl = r.reply_control || {};
     const el = document.createElement('div'); el.className = 'bcs-child';
     
-    // Build child name with IP location
+    // Build child name with IP location badge
     let childNameHtml = esc(m.uname||'B站用户');
     if (replyControl.location) {
       const locationText = replyControl.location.replace(/^IP属地：/, '');
-      childNameHtml += ` <span style="color:#00a1d6;font-size:11px;margin-left:4px;">${esc(locationText)}</span>`;
+      childNameHtml += `<span class="bcs-location-badge" style="font-size:9px;padding:1px 5px;">${esc(locationText)}</span>`;
     }
     
     // Build child meta with time and like count
@@ -782,7 +810,8 @@
           // Escape the emoji code for regex (e.g., [支持] -> \[支持\])
           const escapedCode = emojiCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           const regex = new RegExp(escapedCode, 'g');
-          html = html.replace(regex, `<img src="${esc(emojiData.url)}" alt="${esc(emojiCode)}" style="width:20px;height:20px;vertical-align:middle;margin:0 2px;" referrerpolicy="no-referrer">`);
+          // Enhanced emoji styling with better alignment and hover effect
+          html = html.replace(regex, `<img src="${esc(emojiData.url)}" alt="${esc(emojiCode)}" style="width:22px;height:22px;vertical-align:text-bottom;margin:0 3px;border-radius:2px;transition:transform 0.15s ease;cursor:pointer;" onmouseover="this.style.transform='scale(1.1)'" onmouseout="this.style.transform='scale(1)'" referrerpolicy="no-referrer">`);
         }
       });
     }
