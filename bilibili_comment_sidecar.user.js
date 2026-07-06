@@ -823,11 +823,18 @@
       const data = await response.json();
       
       if (data.code === 0) {
-        // Success - save to local storage and reload replies
+        // Success - save to local storage
         saveRepliedComment(parentRpid);
         
-        // Reload the entire comment list to show the new reply
-        await loadComments(true);
+        // Get the new reply from API response
+        const newReply = data.data.reply;
+        if (newReply) {
+          // Insert the new reply into the DOM immediately
+          insertNewReply(newReply, item);
+        } else {
+          // Fallback: reload comments if API doesn't return the new reply
+          await loadComments(true);
+        }
         
         inputDiv.remove();
       } else {
@@ -842,6 +849,55 @@
   function getCookie(name) {
     const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
     return match ? match[2] : null;
+  }
+
+  /* ── insert new reply into DOM ─────────────────────── */
+  function insertNewReply(reply, parentItem) {
+    try {
+      // Find or create children container
+      let childrenDiv = parentItem.querySelector('.bcs-children');
+      if (!childrenDiv) {
+        childrenDiv = document.createElement('div');
+        childrenDiv.className = 'bcs-children';
+        parentItem.appendChild(childrenDiv);
+      }
+      
+      // Render the new reply as a child comment
+      const childEl = renderChild(reply);
+      
+      // Insert before the toggle button (if exists)
+      const toggleBtn = childrenDiv.querySelector('.bcs-reply-toggle');
+      if (toggleBtn) {
+        childrenDiv.insertBefore(childEl, toggleBtn);
+      } else {
+        childrenDiv.appendChild(childEl);
+      }
+      
+      // Update reply count
+      const rcount = parseInt(parentItem.dataset.rcount || '0') + 1;
+      parentItem.dataset.rcount = String(rcount);
+      
+      // Update or create toggle button
+      if (!toggleBtn) {
+        const btn = document.createElement('button');
+        btn.className = 'bcs-reply-toggle';
+        btn.type = 'button';
+        btn.textContent = `查看 ${rcount} 条回复`;
+        btn.addEventListener('click', () => toggleChildren({
+          rpid_str: parentItem.dataset.rpid,
+          rpid: parentItem.dataset.rpid
+        }, parentItem, btn));
+        childrenDiv.appendChild(btn);
+      } else {
+        toggleBtn.textContent = `查看 ${rcount} 条回复`;
+      }
+      
+      console.log('New reply inserted successfully');
+    } catch(e) {
+      console.error('Failed to insert new reply:', e);
+      // Fallback: reload comments on error
+      loadComments(true).catch(err => console.error('Fallback reload failed:', err));
+    }
   }
 
   /* ── render message with images and emojis ───────────── */
