@@ -18,7 +18,7 @@
   const CFG = {
     pageSize: 20, childPageSize: 10,
     retryDelay: 350, maxRetryDelay: 2000,
-    minWidth: 300, maxWidth: 390, gap: 16,
+    minWidth: 380, maxWidth: 460, gap: 16,
     topFallback: 72, bottomGap: 16
   };
 
