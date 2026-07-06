@@ -28,7 +28,7 @@
   // Selectors for right-side content that might be covered by sidecar
   const RIGHT_CONTENT_SEL = '.recommend-list,#reco_list,.right-container,.video-page-card-right,#slide_ad,.pop-live-small-mode';
 
-  /* ── state ────────────────────────────────────────────── */
+  /* ── state ───────────────────────────────────────────── */
   const S = {
     url: location.href, aid: null, bvid: null,
     pn: 1, loading: false, done: false,
@@ -36,7 +36,8 @@
     retryTimer: null, guardTimer: null,
     host: null, shadow: null,
     sidecar: null, list: null,
-    status: null, count: null, loadMore: null
+    status: null, count: null, loadMore: null,
+    repliedRpidSet: new Set()  // Track replied comment IDs in current session
   };
 
   /* ── WBI signing ────────────────────────────────────── */
@@ -164,6 +165,45 @@
   function playerEl() {
     for (const s of PLAYER_SEL) { const e = document.querySelector(s); if (e) return e; }
     return null;
+  }
+
+  /* ── Local Storage helpers for replied comments ─────── */
+  function getRepliedCommentsKey() {
+    // Use video ID as key to store replied comments per video
+    return S.aid ? `bcs_replied_${S.aid}` : null;
+  }
+
+  function loadRepliedComments() {
+    const key = getRepliedCommentsKey();
+    if (!key) return new Set();
+    try {
+      const data = localStorage.getItem(key);
+      if (data) {
+        return new Set(JSON.parse(data));
+      }
+    } catch(e) {
+      console.error('Failed to load replied comments:', e);
+    }
+    return new Set();
+  }
+
+  function saveRepliedComment(rpid) {
+    const key = getRepliedCommentsKey();
+    if (!key) return;
+    try {
+      const repliedSet = loadRepliedComments();
+      repliedSet.add(String(rpid));
+      localStorage.setItem(key, JSON.stringify([...repliedSet]));
+      // Also update session set
+      S.repliedRpidSet.add(String(rpid));
+    } catch(e) {
+      console.error('Failed to save replied comment:', e);
+    }
+  }
+
+  function isCommentReplied(rpid) {
+    // Check both session and local storage
+    return S.repliedRpidSet.has(String(rpid)) || loadRepliedComments().has(String(rpid));
   }
 
   /* ── inject CSS ──────────────────────────────────────── */
@@ -387,6 +427,7 @@
     .bcs-item:hover .bcs-avatar { transform:scale(1.05) }
     .bcs-name { color:#61666d;font-size:13px;font-weight:600;line-height:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:6px }
     .bcs-location-badge { display:inline-flex;align-items:center;padding:2px 6px;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:#fff;font-size:10px;border-radius:10px;font-weight:500;letter-spacing:0.5px }
+    .bcs-replied-badge { display:inline-flex;align-items:center;padding:1px 5px;background:#ff6699;color:#fff;font-size:9px;border-radius:8px;font-weight:500;margin-left:4px }
     .bcs-message { color:#18191c;font-size:13px;line-height:20px;margin-top:4px;overflow-wrap:anywhere;white-space:pre-wrap }
     .bcs-meta { color:#9499a0;font-size:12px;line-height:18px;margin-top:6px;display:flex;align-items:center;gap:12px }
     .bcs-actions { display:flex;align-items:center;gap:12px;margin-top:6px }
@@ -550,7 +591,7 @@
     
     const contentDiv = document.createElement('div');
     
-    // Name with IP location
+    // Name with IP location and replied badge
     const nameDiv = document.createElement('div');
     nameDiv.className = 'bcs-name';
     let nameHtml = esc(m.uname||'B站用户');
@@ -559,6 +600,12 @@
     if (replyControl.location) {
       const locationText = replyControl.location.replace(/^IP属地：/, '');
       nameHtml += `<span class="bcs-location-badge">${esc(locationText)}</span>`;
+    }
+    
+    // Add "I replied" badge if user has replied to this comment
+    const rpid = r.rpid_str || r.rpid || '';
+    if (rpid && isCommentReplied(rpid)) {
+      nameHtml += `<span class="bcs-replied-badge">我回复过</span>`;
     }
     
     nameDiv.innerHTML = nameHtml;
@@ -776,11 +823,12 @@
       const data = await response.json();
       
       if (data.code === 0) {
-        // Success - reload replies
-        const toggleBtn = item.querySelector('.bcs-reply-toggle');
-        if (toggleBtn) {
-          toggleBtn.click(); // Trigger reload
-        }
+        // Success - save to local storage and reload replies
+        saveRepliedComment(parentRpid);
+        
+        // Reload the entire comment list to show the new reply
+        await loadComments(true);
+        
         inputDiv.remove();
       } else {
         alert('回复失败: ' + (data.message || '未知错误'));
@@ -967,6 +1015,7 @@
     placeSidecar();
     // reset & reload
     S.aid = null; S.bvid = null; S.pn = 1; S.loading = false; S.done = false; S.paginationOffset = '';
+    S.repliedRpidSet.clear(); // Clear session replied set for new video
     if (S.list) S.list.querySelectorAll('.bcs-item').forEach(e => e.remove());
     setStatus('加载中...');
     if (S.count) S.count.textContent = '全部评论';
