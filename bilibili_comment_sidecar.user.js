@@ -889,9 +889,9 @@
       const hasMoreReplies = rcount > (existingChildren + 1); // +1 for the new reply we just added
       
       // Update or create toggle button
-      let toggleBtn = childrenDiv.querySelector('.bcs-reply-toggle');
+      let toggleBtn2 = childrenDiv.querySelector('.bcs-reply-toggle');
       if (hasMoreReplies) {
-        if (!toggleBtn) {
+        if (!toggleBtn2) {
           const btn = document.createElement('button');
           btn.className = 'bcs-reply-toggle';
           btn.type = 'button';
@@ -902,18 +902,40 @@
           }, parentItem, btn));
           childrenDiv.appendChild(btn);
         } else {
-          toggleBtn.textContent = `查看 ${rcount} 条回复`;
+          toggleBtn2.textContent = `查看 ${rcount} 条回复`;
         }
-      } else if (toggleBtn) {
+      } else if (toggleBtn2) {
         // Remove toggle button if all replies are now visible
-        toggleBtn.remove();
+        toggleBtn2.remove();
       }
+      
+      // Add "I replied" badge to parent comment's name
+      addRepliedBadgeToParent(parentItem);
       
       console.log('New reply inserted successfully');
     } catch(e) {
       console.error('Failed to insert new reply:', e);
       // Fallback: reload comments on error
       loadComments(true).catch(err => console.error('Fallback reload failed:', err));
+    }
+  }
+
+  /* ── add replied badge to parent comment ────────────── */
+  function addRepliedBadgeToParent(parentItem) {
+    try {
+      const nameDiv = parentItem.querySelector('.bcs-name');
+      if (!nameDiv) return;
+      
+      // Check if badge already exists
+      if (nameDiv.querySelector('.bcs-replied-badge')) return;
+      
+      // Create and append the badge
+      const badge = document.createElement('span');
+      badge.className = 'bcs-replied-badge';
+      badge.textContent = '我回复过';
+      nameDiv.appendChild(badge);
+    } catch(e) {
+      console.error('Failed to add replied badge:', e);
     }
   }
 
