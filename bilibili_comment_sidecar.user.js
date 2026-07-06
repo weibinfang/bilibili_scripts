@@ -226,19 +226,28 @@
     }
     
     /* Enlarge Bilibili video player progress bar thumb */
-    .bpx-player-progress-wrap .bpx-player-progress-btn,
-    .bpx-player-control-bottom-progress .bui-bar-btn,
-    .bui-progress .bui-progress-dot {
+    .bpx-player-progress-thumb {
+      width: 30px !important;
+      height: 30px !important;
+    }
+    .bpx-player-progress-thumb-icon {
+      width: 30px !important;
+      height: 30px !important;
+    }
+    .bpx-player-progress-thumb-icon svg {
+      width: 30px !important;
+      height: 30px !important;
+    }
+    .bpx-player-progress-cursor {
       width: 16px !important;
       height: 16px !important;
-      transform: scale(1.5) !important;
+      border-radius: 8px !important;
+      top: -6px !important;
+      left: -8px !important;
     }
-    
-    /* Make the thumb more visible on hover */
-    .bpx-player-progress-wrap .bpx-player-progress-btn:hover,
-    .bpx-player-control-bottom-progress .bui-bar-btn:hover,
-    .bui-progress .bui-progress-dot:hover {
-      transform: scale(1.8) !important;
+    .bpx-player-progress-pull-indicator {
+      width: 26px !important;
+      height: 26px !important;
     }
   `);
 
