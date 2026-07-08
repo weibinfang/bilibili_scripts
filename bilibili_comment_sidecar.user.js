@@ -9,10 +9,63 @@
 // @run-at       document-end
 // @grant        GM_addStyle
 // @grant        GM.addStyle
+// @grant        GM_xmlhttpRequest
+// @connect      api.bilibili.com
 // ==/UserScript==
 
 (function () {
   'use strict';
+
+  /* ── fetch interceptor: capture B站 native reply API calls ── */
+  let _interceptedReplyData = null;
+  let _interceptResolve = null;
+  const _originalFetch = window.fetch;
+  window.fetch = function(...args) {
+    const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
+    if (url.includes('/x/v2/reply/') && url.includes('main')) {
+      console.log('[BCS] Intercepted native reply API call:', url);
+      return _originalFetch.apply(this, args).then(resp => {
+        const clone = resp.clone();
+        clone.json().then(data => {
+          console.log('[BCS] Captured native reply data - code:', data?.code, 'replies:', data?.data?.replies?.length);
+          _interceptedReplyData = data;
+          if (_interceptResolve) { _interceptResolve(data); _interceptResolve = null; }
+        }).catch(e => console.error('[BCS] Failed to parse intercepted response:', e));
+        return resp;
+      });
+    }
+    return _originalFetch.apply(this, args);
+  };
+
+  /* ── XHR interceptor: capture B站 native reply API calls via XHR ── */
+  const _originalXHROpen = XMLHttpRequest.prototype.open;
+  const _originalXHRSend = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+    this._bcs_url = url;
+    return _originalXHROpen.call(this, method, url, ...rest);
+  };
+  XMLHttpRequest.prototype.send = function(...args) {
+    this.addEventListener('load', function() {
+      if (this._bcs_url && this._bcs_url.includes('/x/v2/reply') && this._bcs_url.includes('main')) {
+        console.log('[BCS] Intercepted XHR reply API:', this._bcs_url.substring(0, 200));
+        try {
+          const data = JSON.parse(this.responseText);
+          console.log('[BCS] XHR reply - code:', data?.code, 'cursor:', JSON.stringify(data?.data?.cursor));
+        } catch(e) {}
+      }
+    });
+    return _originalXHRSend.apply(this, args);
+  };
+
+  /* ── scan __INITIAL_STATE__ for cursor data ── */
+  try {
+    const st = window.__INITIAL_STATE__;
+    if (st) {
+      console.log('[BCS] __INITIAL_STATE__ keys:', Object.keys(st).join(','));
+      if (st.reply) console.log('[BCS] __INITIAL_STATE__.reply keys:', Object.keys(st.reply).join(','));
+      if (st.comments) console.log('[BCS] __INITIAL_STATE__.comments keys:', Object.keys(st.comments).join(','));
+    }
+  } catch(e) { console.log('[BCS] __INITIAL_STATE__ error:', e.message); }
 
   /* ── config ───────────────────────────────────────────── */
   const CFG = {
@@ -31,8 +84,7 @@
   /* ── state ───────────────────────────────────────────── */
   const S = {
     url: location.href, aid: null, bvid: null,
-    pn: 1, loading: false, done: false,
-    paginationOffset: '',  // WBI endpoint cursor-based pagination
+    paginationOffset: '', loading: false, done: false,
     retryTimer: null, guardTimer: null,
     host: null, shadow: null,
     sidecar: null, list: null,
@@ -51,14 +103,18 @@
 
   async function getWbiKeys() {
     if (_wbiKeys) return _wbiKeys;
+    console.log('[BCS] Fetching WBI keys from nav API...');
     const resp = await fetchJSON('https://api.bilibili.com/x/web-interface/nav');
-    if (resp?.code !== 0) throw new Error('Failed to get WBI keys');
+    console.log('[BCS] Nav API code:', resp?.code);
+    if (resp?.code !== 0) throw new Error('Failed to get WBI keys: ' + (resp?.message || 'unknown'));
     const img = resp.data.wbi_img.img_url;
     const sub = resp.data.wbi_img.sub_url;
+    // WBI keys obtained (debug logging suppressed)
     _wbiKeys = {
       img_key: img.split('/').pop().split('.')[0].slice(0, 32),
       sub_key: sub.split('/').pop().split('.')[0].slice(0, 32)
     };
+
     return _wbiKeys;
   }
 
@@ -73,12 +129,15 @@
     const rawKey = keys.img_key + keys.sub_key;
     const mixinKey = getMixinKey(rawKey);
     params.wts = Math.floor(Date.now() / 1000);
+    console.log('[BCS] WBI sign - params:', JSON.stringify(params));
     // Sort by key and build query string
     const sortedKeys = Object.keys(params).sort();
     const qs = sortedKeys
       .map(k => `${encodeURIComponent(k)}=${encodeURIComponent(params[k])}`)
       .join('&');
+
     const w_rid = md5(qs + mixinKey);
+
     return qs + '&w_rid=' + w_rid;
   }
 
@@ -149,14 +208,14 @@
     const diffMin = Math.floor(diffSec / 60);
     const diffHour = Math.floor(diffMin / 60);
     const diffDay = Math.floor(diffHour / 24);
-    
+
     // Relative time format
     if (diffSec < 60) return '刚刚';
     if (diffMin < 60) return `${diffMin}分钟前`;
     if (diffHour < 24) return `${diffHour}小时前`;
     if (diffDay < 7) return `${diffDay}天前`;
     if (diffDay < 30) return `${Math.floor(diffDay / 7)}周前`;
-    
+
     // For older comments, show date
     const d = new Date(commentTime);
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -224,7 +283,7 @@
     html.bcs-active .video-comment {
       display: none !important;
     }
-    
+
     /* Enlarge Bilibili video player progress bar thumb */
     .bpx-player-progress-thumb {
       width: 60px !important;
@@ -269,10 +328,10 @@
       });
       return;
     }
-    
+
     // Calculate the space needed for sidecar
     const sidecarWidth = getSidecarWidth();
-    
+
     // Apply margin-left to body to push content right
     document.body.style.setProperty('margin-left', sidecarWidth + 'px', 'important');
   }
@@ -306,9 +365,82 @@
   }
 
   async function fetchJSON(url) {
-    const r = await fetch(url, { credentials:'include', headers:{ accept:'application/json,text/plain,*/*' }});
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return r.json();
+    console.log('[BCS] fetchJSON:', url);
+    const isWbiReplyApi = url.includes('/x/v2/reply/wbi/');
+    // For WBI reply API, skip fetch (consistently 412) and go straight to GM_xmlhttpRequest
+    if (!isWbiReplyApi) {
+    // Use fetch for same-origin bilibili API calls (browser auto-sends referer + cookies)
+    try {
+      const r = await fetch(url, {
+        credentials:'include',
+        headers:{
+          accept:'application/json,text/plain,*/*'
+        }
+      });
+      if (r.ok) {
+        const json = await r.json();
+        return json;
+      }
+    } catch(fetchErr) {
+      // fall through to GM_xmlhttpRequest
+    }
+    } // end if (!isWbiReplyApi)
+    // Fallback: GM_xmlhttpRequest with proper headers
+    if (typeof GM_xmlhttpRequest !== 'undefined') {
+      console.log('[BCS] Using GM_xmlhttpRequest');
+      const resp = await new Promise((resolve, reject) => {
+        GM_xmlhttpRequest({
+          method: 'GET',
+          url: url,
+          headers: {
+            'accept': 'application/json,text/plain,*/*',
+            'referer': 'https://www.bilibili.com',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'origin': 'https://www.bilibili.com'
+          },
+          onload: resolve,
+          onerror: reject,
+          ontimeout: () => reject(new Error('Request timeout'))
+        });
+      });
+      console.log('[BCS] GM_xmlhttpRequest status:', resp.status, resp.statusText);
+      // Retry on 412 with exponential backoff (5s, 15s, 30s)
+      if (resp.status === 412) {
+        const delays = [5000, 15000, 30000];
+        for (let i = 0; i < delays.length; i++) {
+          console.log(`[BCS] GM_xmlhttpRequest got 412, retry ${i+1}/${delays.length} after ${delays[i]/1000}s...`);
+          await new Promise(r => setTimeout(r, delays[i]));
+          const retryResp = await new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+              method: 'GET',
+              url: url,
+              headers: {
+                'accept': 'application/json,text/plain,*/*',
+                'referer': 'https://www.bilibili.com',
+                'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'origin': 'https://www.bilibili.com'
+              },
+              onload: resolve,
+              onerror: reject,
+              ontimeout: () => reject(new Error('Request timeout'))
+            });
+          });
+          console.log(`[BCS] GM_xmlhttpRequest retry ${i+1} status:`, retryResp.status);
+          if (retryResp.status === 200) {
+            const json = JSON.parse(retryResp.responseText);
+            console.log('[BCS] fetchJSON response code:', json?.code, 'message:', json?.message);
+            return json;
+          }
+        }
+        throw new Error('412');
+      }
+      console.log('[BCS] GM_xmlhttpRequest responseText:', resp.responseText?.substring(0, 500));
+      if (resp.status !== 200) throw new Error('HTTP ' + resp.status);
+      const json = JSON.parse(resp.responseText);
+      console.log('[BCS] fetchJSON response code:', json?.code, 'message:', json?.message);
+      return json;
+    }
+    throw new Error('No available HTTP method');
   }
 
   async function resolveIds() {
@@ -330,15 +462,15 @@
       const url = `https://api.bilibili.com/x/web-interface/card?mid=${mid}&photo=false`;
       const response = await fetch(url, { credentials: 'include' });
       const data = await response.json();
-      
+
       if (data.code !== 0 || !data.data) {
         // Fallback to basic info from comment data
         tooltip.innerHTML = '<div class="bcs-tooltip-loading">暂无更多信息</div>';
         return;
       }
-      
+
       const userInfo = data.data.card;
-      
+
       const uname = userInfo.name || 'B站用户';
       const level = userInfo.level_info?.current_level || 0;
       const face = userInfo.face || '';
@@ -348,15 +480,15 @@
       const videos = parseInt(userInfo.videos) || 0;
       const sex = userInfo.sex || '保密';
       const articleCount = parseInt(userInfo.article) || 0;
-      
+
       // Check VIP status
       const isVip = userInfo.vip && (userInfo.vip.status === 1 || userInfo.vip.vipStatus === 1);
       const vipLabel = userInfo.vip?.label?.text || '';
-      
+
       // Check official verification
       const isOfficial = userInfo.Official && userInfo.Official.role > 0;
       const officialTitle = userInfo.Official?.title || '';
-      
+
       // Format numbers with Chinese units
       const formatNum = (num) => {
         if (num >= 10000) {
@@ -364,7 +496,7 @@
         }
         return num.toString();
       };
-      
+
       tooltip.innerHTML = `
         <div class="bcs-tooltip-header">
           <img class="bcs-tooltip-avatar" src="${esc(face)}" referrerpolicy="no-referrer" alt="">
@@ -512,18 +644,18 @@
     S.count = shadow.querySelector('.bcs-count');
     S.loadMore = shadow.querySelector('.bcs-load-more');
     S.loadMore.addEventListener('click', () => loadComments(false));
-    
+
     // Add scroll listener for infinite scroll
     S.list.addEventListener('scroll', handleListScroll, { passive: true });
   }
-  
+
   function handleListScroll() {
     if (S.loading || S.done) return;
     const threshold = 100; // px from bottom to trigger load
     const scrollTop = S.list.scrollTop;
     const scrollHeight = S.list.scrollHeight;
     const clientHeight = S.list.clientHeight;
-    
+
     if (scrollHeight - scrollTop - clientHeight < threshold) {
       loadComments(false);
     }
@@ -544,13 +676,13 @@
     if (!S.host) return;
     const p = playerEl();
     const vw = innerWidth, vh = innerHeight;
-    
+
     // Default position: left edge of viewport
     let left = 16;
     let top = CFG.topFallback;
     let w = CFG.maxWidth;
     let h = vh - top - CFG.bottomGap;
-    
+
     if (p) {
       const r = p.getBoundingClientRect();
       // Place sidecar to the LEFT of player
@@ -558,7 +690,7 @@
       w = Math.min(CFG.maxWidth, r.left - CFG.gap - 16);
       top = Math.max(CFG.topFallback, r.top);
       h = vh - top - CFG.bottomGap;
-      
+
       // Ensure minimum width
       if (w < CFG.minWidth) {
         // Not enough space on left, fall back to viewport left edge
@@ -566,7 +698,7 @@
         w = Math.min(CFG.maxWidth, vw / 3); // Use up to 1/3 of viewport
       }
     }
-    
+
     Object.assign(S.host.style, {
       left: Math.round(left)+'px',
       top: Math.round(top)+'px',
@@ -584,7 +716,7 @@
     const el = document.createElement('article');
     el.className = 'bcs-item';
     el.dataset.rpid = r.rpid_str || r.rpid || '';
-    
+
     // Create avatar with hover tooltip
     const avatarWrapper = document.createElement('div');
     avatarWrapper.className = 'bcs-avatar-wrapper';
@@ -595,7 +727,7 @@
     avatarImg.loading = 'lazy';
     avatarImg.alt = '';
     avatarWrapper.appendChild(avatarImg);
-    
+
     // Tooltip - will be populated on hover
     const tooltip = document.createElement('div');
     tooltip.className = 'bcs-avatar-tooltip';
@@ -603,7 +735,7 @@
     tooltip.innerHTML = `
       <div class="bcs-tooltip-loading">加载中...</div>`;
     avatarWrapper.appendChild(tooltip);
-    
+
     // Add hover event to fetch user info
     avatarWrapper.addEventListener('mouseenter', () => {
       if (m.mid && !tooltip.dataset.loaded) {
@@ -611,47 +743,47 @@
         tooltip.dataset.loaded = '1';
       }
     });
-    
+
     el.appendChild(avatarWrapper);
-    
+
     const contentDiv = document.createElement('div');
-    
+
     // Name with IP location and replied badge
     const nameDiv = document.createElement('div');
     nameDiv.className = 'bcs-name';
     let nameHtml = esc(m.uname||'B站用户');
-    
+
     // Add IP location after username as a badge (B站API返回格式: "IP属地：吉林")
     if (replyControl.location) {
       const locationText = replyControl.location.replace(/^IP属地：/, '');
       nameHtml += `<span class="bcs-location-badge">${esc(locationText)}</span>`;
     }
-    
+
     // Add "I replied" badge if user has replied to this comment
     const rpid = r.rpid_str || r.rpid || '';
     if (rpid && isCommentReplied(rpid)) {
       nameHtml += `<span class="bcs-replied-badge">我回复过</span>`;
     }
-    
+
     nameDiv.innerHTML = nameHtml;
     contentDiv.appendChild(nameDiv);
-    
+
     const msgDiv = document.createElement('div');
     msgDiv.className = 'bcs-message';
     // Render message with images and emojis using the emote data from API
     msgDiv.innerHTML = renderMessageContent(c.message || '', c.emote, c.pictures);
     contentDiv.appendChild(msgDiv);
-    
+
     // Time and like count
     const metaDiv = document.createElement('div');
     metaDiv.className = 'bcs-meta';
     metaDiv.innerHTML = `<span>${esc(fmtTime(r.ctime))}</span>`;
     contentDiv.appendChild(metaDiv);
-    
+
     // Action buttons: Like, Dislike, Reply
     const actionsDiv = document.createElement('div');
     actionsDiv.className = 'bcs-actions';
-    
+
     // Like button
     const likeBtn = document.createElement('button');
     likeBtn.className = 'bcs-action-btn';
@@ -664,7 +796,7 @@
     `;
     likeBtn.addEventListener('click', () => handleLike(likeBtn, r));
     actionsDiv.appendChild(likeBtn);
-    
+
     // Dislike button (optional - B站有踩功能)
     const dislikeBtn = document.createElement('button');
     dislikeBtn.className = 'bcs-action-btn';
@@ -674,7 +806,7 @@
       <svg class="bcs-action-icon" viewBox="0 0 24 24"><path d="M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05c-.09.23-.14.47-.14.73v1.91c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L9.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z"/></svg>
     `;
     actionsDiv.appendChild(dislikeBtn);
-    
+
     // Reply button
     const replyBtn = document.createElement('button');
     replyBtn.className = 'bcs-action-btn';
@@ -687,15 +819,15 @@
     `;
     replyBtn.addEventListener('click', () => showReplyInput(replyBtn, el, r));
     actionsDiv.appendChild(replyBtn);
-    
+
     contentDiv.appendChild(actionsDiv);
     el.appendChild(contentDiv);
-    
+
     if (cc > 0) {
       const ch = document.createElement('div'); ch.className = 'bcs-children'; el.appendChild(ch);
       if (Array.isArray(r.replies) && r.replies.length)
         r.replies.slice(0,3).forEach(c => ch.appendChild(renderChild(c)));
-      
+
       // Only show toggle button if there are more replies than displayed
       const hasMoreReplies = cc > (r.replies?.length || 0);
       if (hasMoreReplies || cc > 1) {
@@ -713,17 +845,17 @@
     const m = r.member||{}, c = r.content||{};
     const replyControl = r.reply_control || {};
     const el = document.createElement('div'); el.className = 'bcs-child';
-    
+
     // Build child name with IP location badge
     let childNameHtml = esc(m.uname||'B站用户');
     if (replyControl.location) {
       const locationText = replyControl.location.replace(/^IP属地：/, '');
       childNameHtml += `<span class="bcs-location-badge" style="font-size:9px;padding:1px 5px;">${esc(locationText)}</span>`;
     }
-    
+
     // Build child meta with time and like count
     const childMetaHtml = `${esc(fmtTime(r.ctime))} · ${r.like||0} 赞`;
-    
+
     el.innerHTML = `<img class="bcs-child-avatar" src="${esc(m.avatar||'')}" referrerpolicy="no-referrer" loading="lazy" alt="">
       <div class="bcs-child-content">
         <div class="bcs-child-name">${childNameHtml}</div>
@@ -738,12 +870,12 @@
     if (!S.aid) return;
     const rpid = reply.rpid_str || reply.rpid;
     const isLiked = btn.classList.contains('active');
-    
+
     try {
       // Like: 1, Unlike: 0
       const action = isLiked ? 0 : 1;
       const csrf = getCookie('bili_jct') || '';
-      
+
       // Try both methods: first with body params, then with URL params
       const url = `https://api.bilibili.com/x/v2/reply/action`;
       const params = new URLSearchParams({
@@ -753,19 +885,19 @@
         action: action.toString(),
         csrf: csrf
       });
-      
-      const response = await fetch(url, { 
+
+      const response = await fetch(url, {
         method: 'POST',
         credentials: 'include',
-        headers: { 
-          'Content-Type': 'application/x-www-form-urlencoded' 
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
         },
         body: params.toString()
       });
-      
+
       const data = await response.json();
       console.log('Like response:', data);
-      
+
       if (data.code === 0) {
         // Update UI
         let likes = parseInt(btn.dataset.likes) || 0;
@@ -795,32 +927,32 @@
       existing.remove();
       return;
     }
-    
+
     // Create reply input
     const uname = btn.dataset.uname || '';
     const rpid = reply.rpid_str || reply.rpid;
-    
+
     const inputDiv = document.createElement('div');
     inputDiv.className = 'bcs-reply-input';
     inputDiv.innerHTML = `
       <textarea class="bcs-reply-textarea" placeholder="回复 @${esc(uname)}..."></textarea>
       <button class="bcs-reply-submit" type="button">发送</button>
     `;
-    
+
     // Insert after actions div
     const actionsDiv = item.querySelector('.bcs-actions');
     if (actionsDiv) {
       actionsDiv.insertAdjacentElement('afterend', inputDiv);
     }
-    
+
     // Focus textarea
     const textarea = inputDiv.querySelector('.bcs-reply-textarea');
     textarea.focus();
-    
+
     // Submit handler
     const submitBtn = inputDiv.querySelector('.bcs-reply-submit');
     submitBtn.addEventListener('click', () => submitReply(rpid, textarea.value, item, inputDiv));
-    
+
     // Ctrl+Enter to submit
     textarea.addEventListener('keydown', (e) => {
       if (e.ctrlKey && e.key === 'Enter') {
@@ -831,7 +963,7 @@
 
   async function submitReply(parentRpid, message, item, inputDiv) {
     if (!S.aid || !message.trim()) return;
-    
+
     try {
       const url = 'https://api.bilibili.com/x/v2/reply/add';
       const params = new URLSearchParams({
@@ -842,20 +974,20 @@
         message: message,
         csrf: getCookie('bili_jct') || ''
       });
-      
+
       const response = await fetch(url, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: params.toString()
       });
-      
+
       const data = await response.json();
-      
+
       if (data.code === 0) {
         // Success - save to local storage
         saveRepliedComment(parentRpid);
-        
+
         // Get the new reply from API response
         const newReply = data.data.reply;
         if (newReply) {
@@ -865,7 +997,7 @@
           // Fallback: reload comments if API doesn't return the new reply
           await loadComments(true);
         }
-        
+
         inputDiv.remove();
       } else {
         alert('回复失败: ' + (data.message || '未知错误'));
@@ -891,10 +1023,10 @@
         childrenDiv.className = 'bcs-children';
         parentItem.appendChild(childrenDiv);
       }
-      
+
       // Render the new reply as a child comment
       const childEl = renderChild(reply);
-      
+
       // Insert before the toggle button (if exists)
       const toggleBtn = childrenDiv.querySelector('.bcs-reply-toggle');
       if (toggleBtn) {
@@ -902,17 +1034,17 @@
       } else {
         childrenDiv.appendChild(childEl);
       }
-      
+
       // Update reply count
       const rcount = parseInt(parentItem.dataset.rcount || '0') + 1;
       parentItem.dataset.rcount = String(rcount);
-      
+
       // Count existing child elements (excluding toggle button)
       const existingChildren = Array.from(childrenDiv.querySelectorAll('.bcs-child')).length;
-      
+
       // Only show toggle button if there are more replies than displayed
       const hasMoreReplies = rcount > (existingChildren + 1); // +1 for the new reply we just added
-      
+
       // Update or create toggle button
       let toggleBtn2 = childrenDiv.querySelector('.bcs-reply-toggle');
       if (hasMoreReplies) {
@@ -933,10 +1065,10 @@
         // Remove toggle button if all replies are now visible
         toggleBtn2.remove();
       }
-      
+
       // Add "I replied" badge to parent comment's name
       addRepliedBadgeToParent(parentItem);
-      
+
       console.log('New reply inserted successfully');
     } catch(e) {
       console.error('Failed to insert new reply:', e);
@@ -950,10 +1082,10 @@
     try {
       const nameDiv = parentItem.querySelector('.bcs-name');
       if (!nameDiv) return;
-      
+
       // Check if badge already exists
       if (nameDiv.querySelector('.bcs-replied-badge')) return;
-      
+
       // Create and append the badge
       const badge = document.createElement('span');
       badge.className = 'bcs-replied-badge';
@@ -967,9 +1099,9 @@
   /* ── render message with images and emojis ───────────── */
   function renderMessageContent(message, emote, pictures) {
     if (!message) return '';
-      
+
     let html = esc(message);
-      
+
     // Replace emoji codes with actual images using the emote data from API
     if (emote && typeof emote === 'object') {
       Object.keys(emote).forEach(emojiCode => {
@@ -983,7 +1115,7 @@
         }
       });
     }
-      
+
     // If there are attached pictures in the comment
     if (pictures && Array.isArray(pictures) && pictures.length > 0) {
       pictures.forEach(pic => {
@@ -992,14 +1124,16 @@
         }
       });
     }
-      
+
     return html;
   }
 
   function parseReplies(p) {
+    console.log('[BCS] parseReplies input code:', p?.code);
     if (!p || p.code !== 0 || !p.data) throw new Error(p?.message || 'API failed');
     const d = p.data;
-    
+    console.log('[BCS] parseReplies - replies:', d.replies?.length, 'top_replies:', d.top_replies?.length, 'upper.top:', !!d.upper?.top);
+
     // Collect pinned comments: upper.top + top_replies
     const pinned = [];
     if (d.upper?.top) pinned.push(d.upper.top);
@@ -1015,32 +1149,53 @@
       const id = r.rpid_str || r.rpid;
       if (!seen.has(id)) { seen.add(id); combined.push(r); }
     }
-    // Extract pagination cursor for WBI endpoint
+    // Non-WBI endpoint returns cursor object (not page) for pagination info
     const cursor = d.cursor || {};
-    const nextOffset = cursor.next ? String(cursor.next) : '';
-    const isEnd = cursor.is_end === true || cursor.is_begin === true && combined.length === 0;
+    const page = d.page || {};
+    const count = cursor.all_count || page.count || 0;
+    // isEnd: cursor.is_end, or fewer replies than pageSize, or no replies
+    const isEnd = combined.length === 0 || cursor.is_end === true;
+    const nextOffset = cursor.pagination_reply?.next_offset || '';
+    console.log('[BCS] parseReplies result - combined:', combined.length, 'count:', count, 'cursor:', JSON.stringify(cursor), 'isEnd:', isEnd, 'nextOffset:', nextOffset);
     return {
       replies: combined,
-      count: d.page?.count || cursor.all_count || 0,
+      count,
       nextOffset,
       isEnd
     };
   }
 
   async function fetchReplies() {
+    console.log('[BCS] fetchReplies - offset:', S.paginationOffset, 'aid:', S.aid);
     const baseParams = {
-      oid: S.aid,
-      type: 1,
-      mode: 3,
-      plat: 1,
-      web_location: 1315875,
-      pagination_str: JSON.stringify({ offset: S.paginationOffset }),
-      seek_rpid: ''
+      oid: S.aid.toString(),
+      type: '1',
+      ps: CFG.pageSize.toString()
     };
-    const signedQs = await signWbiParams(baseParams);
-    const url = `https://api.bilibili.com/x/v2/reply/wbi/main?${signedQs}`;
+    let url;
+    if (S.paginationOffset) {
+      // Page 2+: WBI endpoint with cursor pagination (non-WBI endpoint doesn't support pagination_str)
+      baseParams.mode = '3';  // 3=hot comments (WBI endpoint uses mode, not sort)
+      baseParams.pagination_str = JSON.stringify({ offset: S.paginationOffset });
+      baseParams.dm_img_list = '[]';
+      const biliJct = getCookie('bili_jct');
+      if (biliJct) baseParams.bili_jct = biliJct;
+      const buvid3 = getCookie('buvid3');
+      if (buvid3) baseParams.buvid3 = buvid3;
+      console.log('[BCS] fetchReplies - signing params with WBI for page 2+ (WBI endpoint)');
+      const signedQs = await signWbiParams(baseParams);
+      url = `https://api.bilibili.com/x/v2/reply/wbi/main?${signedQs}`;
+    } else {
+      // First page: non-WBI endpoint (no signing needed, avoids 412)
+      baseParams.sort = '0';
+      const params = new URLSearchParams(baseParams);
+      url = `https://api.bilibili.com/x/v2/reply/main?${params.toString()}`;
+    }
+    console.log('[BCS] fetchReplies URL:', url);
     const resp = await fetchJSON(url);
+    console.log('[BCS] fetchReplies response code:', resp?.code);
     if (resp && resp.code === 0) return parseReplies(resp);
+    console.error('[BCS] fetchReplies API error:', resp?.code, resp?.message);
     throw new Error(resp?.message || 'API failed');
   }
 
@@ -1070,38 +1225,81 @@
     finally { btn.disabled = false; }
   }
 
-  /* ── load comments ───────────────────────────────────── */
-  async function loadComments(reset) {
-    if (S.loading || S.done && !reset) return false;
+  /* ── load comments (dynamic, one page at a time) ────── */
+  async function loadComments(reset, _depth) {
+    _depth = _depth || 0;
+    console.log('[BCS] loadComments called - reset:', reset, 'loading:', S.loading, 'done:', S.done, 'offset:', S.paginationOffset, 'depth:', _depth);
+    if (S.loading || S.done && !reset) {
+      console.log('[BCS] loadComments early return');
+      return false;
+    }
     ensureSidecar();
     S.loading = true;
     S.loadMore.disabled = true;
     setStatus(reset ? '加载中...' : '加载更多...');
     try {
       if (reset) {
-        S.pn = 1; S.done = false; S.paginationOffset = '';
+        S.paginationOffset = ''; S.done = false;
         S.list.querySelectorAll('.bcs-item').forEach(e => e.remove());
       }
+      console.log('[BCS] loadComments - resolving IDs...');
       await resolveIds();
+      console.log('[BCS] loadComments - aid:', S.aid, 'bvid:', S.bvid);
       if (!S.aid) { S.loading = false; setStatus('等待视频...'); return 'retry'; }
+      console.log('[BCS] loadComments - fetching replies, offset:', S.paginationOffset);
       const { replies, count, nextOffset, isEnd } = await fetchReplies();
-      // Update pagination cursor for next page
+      console.log('[BCS] loadComments - got replies:', replies.length, 'count:', count, 'nextOffset:', nextOffset, 'isEnd:', isEnd);
       S.paginationOffset = nextOffset;
       // Update comment count display
       if (count && S.count) {
         S.count.textContent = `共 ${count} 条`;
       }
-      if (!replies.length && S.pn === 1) {
+      if (!replies.length && !S.paginationOffset) {
         S.done = true; setStatus('没有评论'); S.loadMore.hidden = true; return true;
       }
+      // Filter out duplicates already in the list
+      const existingIds = new Set();
+      S.list.querySelectorAll('.bcs-item').forEach(e => {
+        if (e.dataset.rpid) existingIds.add(e.dataset.rpid);
+      });
+      console.log('[BCS] loadComments - existing items:', existingIds.size);
+      const uniqueReplies = replies.filter(r => {
+        const id = r.rpid_str || String(r.rpid);
+        return !existingIds.has(id);
+      });
+      console.log('[BCS] loadComments - unique replies:', uniqueReplies.length, 'duplicates:', replies.length - uniqueReplies.length);
+      // If all replies are duplicates, skip to next page automatically (max 10 retries)
+      if (uniqueReplies.length === 0 && replies.length > 0 && !isEnd && _depth < 10) {
+        console.log('[BCS] loadComments - all duplicates, auto-advancing, depth:', _depth);
+        S.loading = false;
+        S.loadMore.disabled = false;
+        setStatus('加载中...');
+        await new Promise(r => setTimeout(r, 1000)); // Delay to avoid rate limiting
+        return loadComments(false, _depth + 1);
+      }
+      // If no unique replies after retries, mark as done
+      if (_depth >= 10 && uniqueReplies.length === 0) {
+        console.log('[BCS] loadComments - no unique replies after 10 retries, marking as done');
+        S.done = true;
+        setStatus('没有更多评论');
+        S.loadMore.hidden = true;
+        S.loadMore.disabled = false;
+        return true;
+      }
       const f = document.createDocumentFragment();
-      replies.forEach(r => f.appendChild(renderReply(r)));
+      uniqueReplies.forEach(r => f.appendChild(renderReply(r)));
       S.list.insertBefore(f, S.loadMore);
-      S.pn++; S.done = isEnd || replies.length === 0;
+      S.done = isEnd || replies.length === 0;
+      console.log('[BCS] loadComments - rendered, done:', S.done, 'offset:', S.paginationOffset);
       setStatus(''); S.loadMore.hidden = S.done; S.loadMore.disabled = false;
       return true;
     } catch(e) {
-      setStatus(`加载失败: ${e.message||e}`);
+      console.error('[BCS] loadComments error:', e);
+      if (e.message === '412') {
+        setStatus('风控限制，请稍后重试');
+      } else {
+        setStatus(`加载失败: ${e.message||e}`);
+      }
       S.loadMore.hidden = false; S.loadMore.disabled = false;
       return false;
     } finally { S.loading = false; }
@@ -1134,7 +1332,7 @@
     showSidecar();
     placeSidecar();
     // reset & reload
-    S.aid = null; S.bvid = null; S.pn = 1; S.loading = false; S.done = false; S.paginationOffset = '';
+    S.aid = null; S.bvid = null; S.paginationOffset = ''; S.loading = false; S.done = false;
     S.repliedRpidSet.clear(); // Clear session replied set for new video
     if (S.list) S.list.querySelectorAll('.bcs-item').forEach(e => e.remove());
     setStatus('加载中...');
