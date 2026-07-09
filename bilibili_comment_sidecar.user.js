@@ -88,7 +88,7 @@
     retryTimer: null, guardTimer: null,
     host: null, shadow: null,
     sidecar: null, list: null,
-    status: null, count: null, loadMore: null,
+    status: null, count: null, loadMore: null, backToTop: null,
     repliedRpidSet: new Set()  // Track replied comment IDs in current session
   };
 
@@ -616,6 +616,12 @@
     .bcs-status { color:#9499a0;font-size:13px;line-height:20px;padding:18px 0;text-align:center }
     .bcs-load-more { background:#f1f2f3;border:0;border-radius:6px;color:#00aeec;cursor:pointer;display:block;font-size:13px;line-height:32px;margin:12px auto 0;padding:0 16px }
     .bcs-load-more[disabled] { color:#9499a0;cursor:default }
+    /* Back to top button */
+    .bcs-back-to-top { position:absolute;bottom:20px;right:20px;width:40px;height:40px;background:#00aeec;color:#fff;border:0;border-radius:50%;box-shadow:0 2px 8px rgba(0,0,0,0.15);cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0;visibility:hidden;transition:all 0.3s ease;z-index:100 }
+    .bcs-back-to-top.visible { opacity:1;visibility:visible }
+    .bcs-back-to-top:hover { background:#0099d6;transform:scale(1.1) }
+    .bcs-back-to-top:active { transform:scale(0.95) }
+    .bcs-back-to-top svg { width:20px;height:20px;fill:currentColor }
   `;
 
   function buildShadowDOM() {
@@ -631,7 +637,10 @@
     root.className = 'bcs-root';
     root.innerHTML = `
       <div class="bcs-header"><div class="bcs-title">评论</div><div class="bcs-count">全部评论</div></div>
-      <div class="bcs-list"><div class="bcs-status">加载中...</div><button class="bcs-load-more" type="button" hidden>加载更多</button></div>`;
+      <div class="bcs-list" style="position:relative;"><div class="bcs-status">加载中...</div><button class="bcs-load-more" type="button" hidden>加载更多</button></div>
+      <button class="bcs-back-to-top" type="button" title="回到顶部">
+        <svg viewBox="0 0 24 24"><path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z"/></svg>
+      </button>`;
     shadow.appendChild(root);
 
     document.documentElement.appendChild(host);
@@ -643,7 +652,9 @@
     S.status = shadow.querySelector('.bcs-status');
     S.count = shadow.querySelector('.bcs-count');
     S.loadMore = shadow.querySelector('.bcs-load-more');
+    S.backToTop = shadow.querySelector('.bcs-back-to-top');
     S.loadMore.addEventListener('click', () => loadComments(false));
+    S.backToTop.addEventListener('click', scrollToTop);
 
     // Add scroll listener for infinite scroll
     S.list.addEventListener('scroll', handleListScroll, { passive: true });
@@ -656,9 +667,26 @@
     const scrollHeight = S.list.scrollHeight;
     const clientHeight = S.list.clientHeight;
 
+    // Show/hide back to top button based on scroll position
+    if (S.backToTop) {
+      if (scrollTop > 300) {
+        S.backToTop.classList.add('visible');
+      } else {
+        S.backToTop.classList.remove('visible');
+      }
+    }
+
     if (scrollHeight - scrollTop - clientHeight < threshold) {
       loadComments(false);
     }
+  }
+
+  function scrollToTop() {
+    if (!S.list) return;
+    S.list.scrollTo({
+      top: 0,
+      behavior: 'smooth'
+    });
   }
 
   function ensureSidecar() {
@@ -828,8 +856,9 @@
       if (Array.isArray(r.replies) && r.replies.length)
         r.replies.slice(0,3).forEach(c => ch.appendChild(renderChild(c)));
 
-      // Only show toggle button if there are more replies than displayed
-      const hasMoreReplies = cc > (r.replies?.length || 0);
+      // Only show toggle button if there are more replies than displayed OR if we need to load more
+      const displayedCount = Array.isArray(r.replies) ? r.replies.length : 0;
+      const hasMoreReplies = cc > displayedCount;
       if (hasMoreReplies || cc > 1) {
         const btn = document.createElement('button');
         btn.className = 'bcs-reply-toggle'; btn.type = 'button';
@@ -1204,10 +1233,19 @@
     const ch = item.querySelector('.bcs-children');
     if (!rid || !ch) return;
     if (item.dataset.chLoaded === '1') {
-      const hidden = item.dataset.chHidden === '1';
-      ch.querySelectorAll('.bcs-child').forEach(c => c.hidden = !hidden);
-      item.dataset.chHidden = hidden ? '0' : '1';
-      btn.textContent = hidden ? `查看 ${root.rcount||root.count||0} 条回复` : '隐藏回复';
+      // Toggle visibility of child comments
+      const isHidden = item.dataset.chHidden === '1';
+      const shouldHide = !isHidden; // If not hidden, we should hide it now
+      
+      // Use display style instead of hidden attribute for Shadow DOM compatibility
+      ch.querySelectorAll('.bcs-child').forEach(c => {
+        c.style.display = shouldHide ? 'none' : '';
+      });
+      item.dataset.chHidden = shouldHide ? '1' : '0';
+      
+      // Update button text based on new state
+      const count = root.rcount || root.count || 0;
+      btn.textContent = shouldHide ? `查看 ${count} 条回复` : '隐藏回复';
       return;
     }
     btn.disabled = true; btn.textContent = '加载中...';
@@ -1216,11 +1254,23 @@
       const p = await fetchJSON(u);
       if (!p || p.code !== 0 || !p.data) throw new Error(p?.message || 'Failed');
       ch.querySelectorAll('.bcs-child').forEach(c => c.remove());
-      const f = document.createDocumentFragment();
-      p.data.replies.forEach(r => f.appendChild(renderChild(r)));
-      ch.insertBefore(f, btn);
-      item.dataset.chLoaded = '1'; item.dataset.chHidden = '0';
-      btn.textContent = p.data.page?.count || p.data.replies.length ? '隐藏回复' : '没有回复';
+      
+      // Check if there are any replies to display
+      const hasReplies = (p.data.page?.count > 0) || (p.data.replies && p.data.replies.length > 0);
+      
+      if (hasReplies) {
+        // Insert child comments before the button
+        const f = document.createDocumentFragment();
+        p.data.replies.forEach(r => f.appendChild(renderChild(r)));
+        ch.insertBefore(f, btn);
+        item.dataset.chLoaded = '1'; item.dataset.chHidden = '0';
+        btn.textContent = '隐藏回复';
+      } else {
+        // No replies - remove the button entirely
+        btn.remove();
+        item.dataset.chLoaded = '1';
+        item.dataset.chHidden = '1'; // Mark as "hidden" so clicking again won't try to reload
+      }
     } catch(e) { btn.textContent = `加载失败: ${e.message||e}`; }
     finally { btn.disabled = false; }
   }
